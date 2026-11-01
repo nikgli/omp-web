@@ -1015,6 +1015,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "plan_review":
         setExtensionDialog(request);
         break;
+      case "close":
+        setExtensionDialog((current) => current?.id === request.id ? null : current);
+        break;
       case "notify": {
         addNotice({
           id: request.id,

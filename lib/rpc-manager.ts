@@ -60,6 +60,7 @@ export interface AgentEvent {
 type EventListener = (event: AgentEvent) => void;
 
 type PendingUiResponse = {
+  event: AgentEvent;
   resolve: (response: ExtensionUiResponse) => void;
   cancel: () => void;
 };
@@ -284,6 +285,8 @@ export class AgentSessionWrapper {
   private listeners: EventListener[] = [];
   private pendingUiResponses = new Map<string, PendingUiResponse>();
   private pendingUiRequests = new Map<string, AgentEvent>();
+  private activeUiResponseId: string | null = null;
+  private pendingCustomUiStarts = new Map<string, () => void>();
   private activeCustomUis = new Map<string, ActiveCustomUi>();
   private extensionStatuses = new Map<string, string>();
   private extensionWidgets = new Map<string, ExtensionWidgetItem>();
@@ -299,6 +302,7 @@ export class AgentSessionWrapper {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private onDestroyCallback: (() => void) | null = null;
   private shutdownPromise: Promise<void> | null = null;
+  private shuttingDown = false;
   private readonly subagents: RpcSubagentRegistry;
   // The SDK registry removes terminal entries after emitting their lifecycle frame.
   // Keep a bounded per-session copy so state requests can still expose history.
@@ -491,6 +495,7 @@ export class AgentSessionWrapper {
       // its shared initializer so omp-web sessions expose exactly the action set
       // `omp --mode rpc` does, then layer our browser-backed UI context on top.
       await initializeExtensions(this.inner as never, {
+        mode: "rpc",
         uiContext: this.createExtensionUiContext() as never,
         reportSendError: (action, error) => this.emit({
           type: "extension_error",
@@ -740,12 +745,20 @@ export class AgentSessionWrapper {
     if (this.sessionFile) cacheSessionPath(currentId, this.sessionFile);
     invalidateSessionListCache();
     // Existing streams still hold this wrapper after its registry key moves.
-    for (const listener of this.listeners) listener({ type: "session_changed", sessionId: currentId, runtimeId: this.runtimeId });
+    this.emit({ type: "session_changed", sessionId: currentId, runtimeId: this.runtimeId });
   }
 
   private emit(event: AgentEvent): void {
     this.syncSessionIdentity();
-    for (const l of this.listeners) l(event);
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(event);
+      } catch {
+        // A closed SSE controller must not reject or strand an extension prompt.
+        const index = this.listeners.indexOf(listener);
+        if (index !== -1) this.listeners.splice(index, 1);
+      }
+    }
   }
 
   private resetIdleTimer(): void {
@@ -783,7 +796,13 @@ export class AgentSessionWrapper {
 
   onEvent(listener: EventListener): () => void {
     this.listeners.push(listener);
-    for (const event of this.pendingUiRequests.values()) listener(event);
+    try {
+      for (const event of this.pendingUiRequests.values()) listener(event);
+    } catch (error) {
+      const index = this.listeners.indexOf(listener);
+      if (index !== -1) this.listeners.splice(index, 1);
+      throw error;
+    }
     return () => {
       const i = this.listeners.indexOf(listener);
       if (i !== -1) this.listeners.splice(i, 1);
@@ -1205,8 +1224,7 @@ export class AgentSessionWrapper {
     this.goalModeController?.dispose();
     this.subagents.dispose();
     this.subagentHistory.clear();
-    for (const pending of this.pendingUiResponses.values()) pending.cancel();
-    for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
+    this.cancelPendingUi();
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
     try {
@@ -1229,6 +1247,8 @@ export class AgentSessionWrapper {
     if (this.shutdownPromise) return this.shutdownPromise;
     if (!this._alive) return;
 
+    this.shuttingDown = true;
+    this.cancelPendingUi();
     this.shutdownPromise = (async () => {
       try {
         try {
@@ -1247,7 +1267,24 @@ export class AgentSessionWrapper {
     return this.shutdownPromise;
   }
 
+  private cancelPendingUi(): void {
+    for (const pending of this.pendingUiResponses.values()) pending.cancel();
+    for (const cancel of this.pendingCustomUiStarts.values()) cancel();
+    for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
+  }
+
+  private presentNextUiRequest(): void {
+    if (this.activeUiResponseId || !this._alive || this.shuttingDown) return;
+    const next = this.pendingUiResponses.entries().next().value;
+    if (!next) return;
+    const [id, pending] = next;
+    this.activeUiResponseId = id;
+    this.pendingUiRequests.set(id, pending.event);
+    this.emit(pending.event);
+  }
+
   private resolveExtensionUiResponse(response: ExtensionUiResponse): void {
+    if (this.activeUiResponseId !== response.id) return;
     const pending = this.pendingUiResponses.get(response.id);
     if (!pending) return;
     pending.resolve(response);
@@ -1331,7 +1368,7 @@ export class AgentSessionWrapper {
     factory: unknown,
     options?: unknown,
   ): Promise<T> {
-    if (typeof factory !== "function") return Promise.resolve(undefined as T);
+    if (typeof factory !== "function" || !this._alive || this.shuttingDown) return Promise.resolve(undefined as T);
 
     const id = randomUUID();
     const width = this.getCustomUiWidth(options);
@@ -1348,6 +1385,7 @@ export class AgentSessionWrapper {
       const finish = (value: T) => {
         if (completed) return;
         completed = true;
+        this.pendingCustomUiStarts.delete(id);
         resolve(value);
       };
       const done = (value: T) => {
@@ -1357,6 +1395,7 @@ export class AgentSessionWrapper {
           finish(value);
         }
       };
+      this.pendingCustomUiStarts.set(id, () => finish(undefined as T));
 
       Promise.resolve()
         .then(() => factory(tui, PLAIN_TEXT_THEME, CUSTOM_UI_KEYBINDINGS, done))
@@ -1373,6 +1412,7 @@ export class AgentSessionWrapper {
             finish(undefined as T);
             return;
           }
+          this.pendingCustomUiStarts.delete(id);
           const custom: ActiveCustomUi = {
             component: component as CustomUiComponent,
             width,
@@ -1402,7 +1442,7 @@ export class AgentSessionWrapper {
     timeout?: number,
     signal?: AbortSignal,
   ): Promise<T> {
-    if (signal?.aborted) return Promise.resolve(defaultValue);
+    if (signal?.aborted || !this._alive || this.shuttingDown) return Promise.resolve(defaultValue);
 
     const id = randomUUID();
     const fullRequest = {
@@ -1419,22 +1459,27 @@ export class AgentSessionWrapper {
         signal?.removeEventListener("abort", onAbort);
         this.pendingUiRequests.delete(id);
         this.pendingUiResponses.delete(id);
+        if (this.activeUiResponseId === id) this.activeUiResponseId = null;
       };
       const settle = (value: T) => {
+        const presented = this.activeUiResponseId === id;
         cleanup();
+        if (presented) this.emit({ type: "extension_ui_request", id, method: "close" });
         resolve(value);
+        this.presentNextUiRequest();
       };
       const onAbort = () => settle(defaultValue);
 
       if (timeout) timeoutId = setTimeout(() => settle(defaultValue), timeout);
       signal?.addEventListener("abort", onAbort, { once: true });
 
-      this.pendingUiRequests.set(id, fullRequest as AgentEvent);
+      const event = fullRequest as AgentEvent;
       this.pendingUiResponses.set(id, {
+        event,
         resolve: (response) => settle(parseResponse(response)),
         cancel: () => settle(defaultValue),
       });
-      this.emit(fullRequest as AgentEvent);
+      this.presentNextUiRequest();
     });
   }
 
@@ -1456,7 +1501,7 @@ export class AgentSessionWrapper {
         opts?.signal,
       ),
       select: (title, options, opts) => this.requestExtensionUi(
-        { method: "select", title, options, ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
+        { method: "select", title, options: options.map((option: string | { label: string }) => typeof option === "string" ? option : option.label), ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
         undefined,
         (response) => "value" in response ? response.value : undefined,
         opts?.timeout,
@@ -1469,7 +1514,7 @@ export class AgentSessionWrapper {
         opts?.timeout,
         opts?.signal,
       ),
-      input: (title, placeholder, opts) => this.requestExtensionUi(
+      input: (title, placeholder, opts) => opts && "secret" in opts && opts.secret === true ? Promise.resolve(undefined) : this.requestExtensionUi(
         { method: "input", title, ...(placeholder !== undefined ? { placeholder } : {}), ...(opts?.timeout ? { timeout: opts.timeout } : {}) },
         undefined,
         (response) => "value" in response ? response.value : undefined,

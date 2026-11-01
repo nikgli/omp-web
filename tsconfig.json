@@ -22,6 +22,51 @@
       }
     ],
     "paths": {
+      "@oh-my-pi/pi-agent-core": [
+        "./node_modules/omp-published-agent/dist/types/index.d.ts"
+      ],
+      "@oh-my-pi/pi-agent-core/*": [
+        "./node_modules/omp-published-agent/dist/types/*",
+        "./node_modules/omp-published-agent/dist/types/*/index.d.ts"
+      ],
+      "@oh-my-pi/pi-ai": [
+        "./node_modules/omp-published-ai/dist/types/index.d.ts"
+      ],
+      "@oh-my-pi/pi-ai/oauth": [
+        "./node_modules/omp-published-ai/dist/types/registry/oauth/index.d.ts"
+      ],
+      "@oh-my-pi/pi-ai/*": [
+        "./node_modules/omp-published-ai/dist/types/*",
+        "./node_modules/omp-published-ai/dist/types/*/index.d.ts"
+      ],
+      "@oh-my-pi/pi-catalog": [
+        "./node_modules/omp-published-catalog/dist/types/index.d.ts"
+      ],
+      "@oh-my-pi/pi-catalog/*": [
+        "./node_modules/omp-published-catalog/dist/types/*",
+        "./node_modules/omp-published-catalog/dist/types/*/index.d.ts"
+      ],
+      "@oh-my-pi/pi-coding-agent": [
+        "./node_modules/omp-published-coding-agent/dist/types/index.d.ts"
+      ],
+      "@oh-my-pi/pi-coding-agent/*": [
+        "./node_modules/omp-published-coding-agent/dist/types/*",
+        "./node_modules/omp-published-coding-agent/dist/types/*/index.d.ts"
+      ],
+      "@oh-my-pi/pi-tui": [
+        "./node_modules/omp-published-tui/dist/types/index.d.ts"
+      ],
+      "@oh-my-pi/pi-tui/*": [
+        "./node_modules/omp-published-tui/dist/types/*",
+        "./node_modules/omp-published-tui/dist/types/*/index.d.ts"
+      ],
+      "@oh-my-pi/pi-utils": [
+        "./node_modules/omp-published-utils/dist/types/index.d.ts"
+      ],
+      "@oh-my-pi/pi-utils/*": [
+        "./node_modules/omp-published-utils/dist/types/*",
+        "./node_modules/omp-published-utils/dist/types/*/index.d.ts"
+      ],
       "@/*": [
         "./*"
       ]
@@ -36,7 +81,9 @@
     ".next/dev/types/**/*.ts",
     ".next/dev/dev/types/**/*.ts",
     "src-tauri/server/.next/types/**/*.ts",
-    "src-tauri/server/.next/dev/types/**/*.ts"
+    "src-tauri/server/.next/dev/types/**/*.ts",
+    ".next-custom/types/**/*.ts",
+    ".next-custom/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

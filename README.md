@@ -18,6 +18,49 @@ The web view for [omp (oh-my-pi)](https://github.com/can1357/oh-my-pi). omp-web 
 
 It is not a separate agent: omp-web runs omp's own SDK in-process, against the same `~/.omp/agent` directory, so a session started in the terminal continues in the browser and back again.
 
+## Local custom fork
+
+This checkout runs the SDK from the sibling `../omp-custom` checkout, including
+its subagent approval changes. It uses the same OMP settings, extensions,
+credentials and sessions as the custom CLI; it does not launch the CLI binary.
+Use Bun for this fork: its `link:` dependencies are not npm dependencies.
+
+After installing dependencies in `omp-custom`, install and build this checkout:
+
+```bash
+bun install
+bun run build:custom
+ln -s "$PWD/bin/omp-web-custom.js" "$HOME/.bun/bin/omp-web-custom"
+```
+
+The symlink is needed only once. Start it with:
+
+```bash
+omp-web-custom --hostname 0.0.0.0 --no-open --authenticated
+```
+
+The first `--authenticated` run prompts for a password if none is configured.
+Basic Auth alone does not encrypt HTTP: use HTTPS or a trusted VPN. The server
+otherwise has the privileges of the account running it.
+
+The fork's build uses published OMP declarations matching the local SDK version,
+but executes the linked custom source. The launcher and build reject missing,
+mislinked, or version-mismatched packages. Restart the server after updating the
+custom OMP checkout, and rebuild the web app after changing web code or OMP
+versions.
+
+To update, first save or commit local changes in both checkouts. Update the
+custom OMP checkout using its own update workflow. In this checkout, fetch and
+merge the desired upstream `omp-web` revision, resolve any conflicts, update
+the `omp-published-*` dependency versions in `package.json` to match the
+corresponding local OMP packages, then run `bun install` and
+`bun run build:custom`. OMP and omp-web releases can change SDK interfaces, so
+merges and compatibility fixes may require manual work. The in-app self-update
+is disabled because it would install the published `omp-web`, not this fork.
+
+The sections below describe the upstream project; its global installation
+commands install the unmodified application, not this custom fork.
+
 
 ## Quick Start
 

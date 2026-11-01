@@ -45,7 +45,7 @@ const {
 } = require("./password-prompt");
 
 const pkgDir = path.join(__dirname, "..");
-const nextDir = path.join(pkgDir, ".next");
+const nextDir = path.resolve(pkgDir, process.env.OMP_WEB_DIST_DIR || ".next");
 
 // Resolve next's CLI entry directly to avoid relying on .bin symlinks (which
 // may not exist when installed via npx/bunx).

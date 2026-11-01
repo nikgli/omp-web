@@ -229,6 +229,11 @@ export type ExtensionUiRequest =
   | {
       type: "extension_ui_request";
       id: string;
+      method: "close";
+    }
+  | {
+      type: "extension_ui_request";
+      id: string;
       method: "input";
       title: string;
       placeholder?: string;
